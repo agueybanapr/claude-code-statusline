@@ -77,6 +77,13 @@ function Paint($text, $color) {
     return "$color$text$AnsiReset"
 }
 
+function Get-SafeText($text, $limit = 0) {
+    # Drop control characters (terminal escapes) and shorten long text.
+    $text = ([string]$text) -replace '[\x00-\x1f\x7f-\x9f]', ''
+    if ($limit -gt 0 -and $text.Length -gt $limit) { $text = $text.Substring(0, $limit - 1) + $IconEllipsis }
+    return $text
+}
+
 function Get-Level($pct) {
     if ($pct -lt 50) { return $AnsiGreen }
     if ($pct -lt 80) { return $AnsiYellow }
@@ -250,7 +257,7 @@ function Get-ProjectRoot($data) {
 
 function Get-ProjectSegment($root) {
     $parts = @(([string]$root) -split '[\\/]' | Where-Object { $_ })
-    $label = (@($parts | Select-Object -Last 2)) -join '/'
+    $label = Get-SafeText ((@($parts | Select-Object -Last 2)) -join '/')
     return (Link $label $root)
 }
 
@@ -267,15 +274,14 @@ function Read-Branch($gitDir) {
     } else {
         $name = $head.Substring(0, [Math]::Min(7, $head.Length))
     }
-    if ($name.Length -gt $MaxBranch) { $name = $name.Substring(0, $MaxBranch - 1) + $IconEllipsis }
-    return $name
+    return (Get-SafeText $name $MaxBranch)
 }
 
 function Get-GitName($data, $root) {
     # The worktree name in a linked worktree, otherwise the current branch.
     $name = $data.worktree.name
     if (-not $name) { $name = $data.workspace.git_worktree }
-    if ($name) { return [string]$name }
+    if ($name) { return (Get-SafeText $name $MaxBranch) }
     $folder = [string]$root
     while ($folder) {
         $marker = Join-Path $folder '.git'
@@ -288,7 +294,7 @@ function Get-GitName($data, $root) {
             }
             $at = $target.IndexOf('gitdir:')
             if ($at -ge 0) { $target = $target.Substring($at + 7).Trim() }
-            if ($target -match '[\\/]worktrees[\\/]') { return (($target -split '[\\/]') | Where-Object { $_ } | Select-Object -Last 1) }
+            if ($target -match '[\\/]worktrees[\\/]') { return (Get-SafeText (($target -split '[\\/]') | Where-Object { $_ } | Select-Object -Last 1) $MaxBranch) }
             if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path $folder $target }
             return (Read-Branch $target)   # a submodule
         }
@@ -377,6 +383,13 @@ $statusLineSetting | Add-Member -NotePropertyName refreshInterval -NotePropertyV
 $settings | Add-Member -NotePropertyName statusLine -NotePropertyValue $statusLineSetting -Force
 $tempSettings = "$settingsPath.tmp"
 [IO.File]::WriteAllText($tempSettings, (ConvertTo-Json -InputObject $settings -Depth 100), $utf8)
+if (Test-Path -LiteralPath $settingsPath) {
+    # Keep the existing file's access rules (ACL) instead of the folder default.
+    $access = (Get-Acl -LiteralPath $settingsPath).GetSecurityDescriptorSddlForm('Access')
+    $tempAcl = Get-Acl -LiteralPath $tempSettings
+    $tempAcl.SetSecurityDescriptorSddlForm($access, 'Access')
+    Set-Acl -LiteralPath $tempSettings -AclObject $tempAcl
+}
 Move-Item -LiteralPath $tempSettings -Destination $settingsPath -Force
 
 # Show a sample of a full session, with made-up data, in this terminal.

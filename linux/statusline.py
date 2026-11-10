@@ -36,8 +36,17 @@ BAR_YELLOW = ("\033[38;2;240;205;100m", "\033[38;2;150;126;60m")
 BAR_RED = ("\033[38;2;240;105;95m", "\033[38;2;150;66;60m")
 
 
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
 def paint(text, color):
     return f"{color}{text}{RESET}"
+
+
+def clean(text, limit=None):
+    """Drop control characters (terminal escapes) and shorten long text with …"""
+    text = CONTROL_CHARS.sub("", str(text))
+    return text if limit is None or len(text) <= limit else text[: limit - 1] + "…"
 
 
 def level(pct):
@@ -186,7 +195,7 @@ def project_root(data):
 
 
 def project_segment(root):
-    return link("/".join(root.parts[-2:]), root)
+    return link(clean("/".join(root.parts[-2:])), root)
 
 
 def read_branch(git_dir):
@@ -196,7 +205,7 @@ def read_branch(git_dir):
     except OSError:
         return ""
     name = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else head[:7]
-    return name if len(name) <= MAX_BRANCH else name[: MAX_BRANCH - 1] + "…"
+    return clean(name, MAX_BRANCH)
 
 
 def git_name(data, root):
@@ -205,7 +214,7 @@ def git_name(data, root):
     workspace = data.get("workspace") or {}
     name = worktree.get("name") or workspace.get("git_worktree")
     if name:
-        return name
+        return clean(name, MAX_BRANCH)
     for folder in (root, *root.parents):
         marker = folder / ".git"
         if marker.is_dir():
@@ -216,7 +225,7 @@ def git_name(data, root):
             except OSError:
                 return ""
             if "/worktrees/" in target:
-                return Path(target).name
+                return clean(Path(target).name, MAX_BRANCH)
             return read_branch(folder / target)  # a submodule
     return ""
 

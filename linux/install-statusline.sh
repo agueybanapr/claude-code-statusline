@@ -7,7 +7,7 @@ command -v python3 >/dev/null || { echo "python3 not found. Install it and run t
 mkdir -p "$HOME/.claude"
 
 # Check settings first so a bad file leaves everything untouched.
-python3 - <<'PY'
+python3 -I - <<'PY'  # -I: never import modules from the current folder
 import json, os, sys
 path = os.path.expanduser("~/.claude/settings.json")
 if os.path.exists(path):
@@ -58,8 +58,17 @@ BAR_YELLOW = ("\033[38;2;240;205;100m", "\033[38;2;150;126;60m")
 BAR_RED = ("\033[38;2;240;105;95m", "\033[38;2;150;66;60m")
 
 
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
 def paint(text, color):
     return f"{color}{text}{RESET}"
+
+
+def clean(text, limit=None):
+    """Drop control characters (terminal escapes) and shorten long text with …"""
+    text = CONTROL_CHARS.sub("", str(text))
+    return text if limit is None or len(text) <= limit else text[: limit - 1] + "…"
 
 
 def level(pct):
@@ -208,7 +217,7 @@ def project_root(data):
 
 
 def project_segment(root):
-    return link("/".join(root.parts[-2:]), root)
+    return link(clean("/".join(root.parts[-2:])), root)
 
 
 def read_branch(git_dir):
@@ -218,7 +227,7 @@ def read_branch(git_dir):
     except OSError:
         return ""
     name = head[len("ref: refs/heads/"):] if head.startswith("ref: refs/heads/") else head[:7]
-    return name if len(name) <= MAX_BRANCH else name[: MAX_BRANCH - 1] + "…"
+    return clean(name, MAX_BRANCH)
 
 
 def git_name(data, root):
@@ -227,7 +236,7 @@ def git_name(data, root):
     workspace = data.get("workspace") or {}
     name = worktree.get("name") or workspace.get("git_worktree")
     if name:
-        return name
+        return clean(name, MAX_BRANCH)
     for folder in (root, *root.parents):
         marker = folder / ".git"
         if marker.is_dir():
@@ -238,7 +247,7 @@ def git_name(data, root):
             except OSError:
                 return ""
             if "/worktrees/" in target:
-                return Path(target).name
+                return clean(Path(target).name, MAX_BRANCH)
             return read_branch(folder / target)  # a submodule
     return ""
 
@@ -294,11 +303,13 @@ if __name__ == "__main__":
 STATUSLINE_PY
 chmod +x "$HOME/.claude/statusline.py"
 
-python3 - <<'PY'
-import json, os, shutil, time
+python3 -I - <<'PY'  # -I: never import modules from the current folder
+import json, os, shutil, stat, time
 path = os.path.realpath(os.path.expanduser("~/.claude/settings.json"))
 settings = {}
+mode = 0o600  # a new settings file is private; an existing one keeps its permissions
 if os.path.exists(path):
+    mode = stat.S_IMODE(os.stat(path).st_mode)
     with open(path) as f:
         settings = json.load(f)
     backup = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
@@ -312,7 +323,9 @@ settings["statusLine"] = {
     "refreshInterval": 30,
 }
 tmp = path + ".tmp"
-with open(tmp, "w") as f:
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+os.fchmod(fd, mode)  # also covers a leftover .tmp file from an earlier run
+with os.fdopen(fd, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
 os.replace(tmp, path)
@@ -321,7 +334,7 @@ PY
 echo
 echo "Sample of a full session, using made-up data, in your own terminal:"
 echo
-python3 - <<'PY'
+python3 -I - <<'PY'  # -I: never import modules from the current folder
 import json, os, subprocess, tempfile, time
 from datetime import datetime, timezone
 now = time.time()
